@@ -12,9 +12,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
+import java.io.PrintWriter;
 import java.util.*;
 
 import javax.imageio.ImageIO;
@@ -22,6 +20,7 @@ import javax.imageio.ImageIO;
 import utils.FileName;
 import utils.IntPair;
 import utils.Parameters;
+import utils.Proportion;
 import utils.RGB;
 import utils.Signature;
 
@@ -47,6 +46,12 @@ public class MatchUtils {
 		return of;
 	}
 
+	String getMatchFile() {
+		String of = param.getArg('m');
+		if (null == of)
+			of = DEFAULT_MFILE;
+		return of;
+	}
 	int getWeight() {
 		int ret;
 		String w = param.getArg('w');
@@ -77,36 +82,33 @@ public class MatchUtils {
 		return ret;
 	}
 
-	private int getPropNumberOfPixels() {
-		return 40;
-	}
-
-	private IntPair getProportion() {
+	IntPair proportion = null;
+	String sproportion = null;
+	private void initProportion() {
 		String oriPar = getVertical() ? "Vproportion" : "Hproportion";
-		String proportion = rootParam.get(oriPar);
-		String props[] = proportion.split(",");
+		sproportion = rootParam.get(oriPar);
+		String props[] = sproportion.split(",");
 		if (verbose) {
-			System.out.println("proportion=" + proportion);
+			System.out.println("proportion=" + sproportion);
 			System.out.println("props.length=" + props.length);
 		}
-		IntPair ret = null;
 		try {
-			ret = new IntPair(Integer.parseInt(props[0]), Integer.parseInt(props[1]));
+			proportion = new IntPair(Integer.parseInt(props[0]), Integer.parseInt(props[1]));
 		} catch (Exception e) {
 			System.out.println("proportion=" + proportion);
 			System.out.println("props[0]=" + props[0]);
 			System.out.println("props[1]=" + props[1]);
 		}
-		return ret;
 	}
 
 	Map<String, String> rootParam = new HashMap<String, String>();
 
-	private void loadRootSignatureParams() {
-		String rootsignaturefile = param.getArg('s');
+	private void loadRootSignatureParams(char fileParam) {
+		String rootsignaturefile = param.getArg(fileParam);
 		try (BufferedReader br = new BufferedReader(new FileReader(rootsignaturefile))) {
 			for (String line; (line = br.readLine()) != null;) {
 				if (line.startsWith("@")) {
+					if (verbose) System.out.println("paramline="+line);
 					line = line.substring(1);
 					String[] fields = line.split("=");
 					rootParam.put(fields[0], fields[1]);
@@ -114,6 +116,7 @@ public class MatchUtils {
 					break;
 				}
 			}
+			if (verbose) System.out.println("rootParam.size()="+rootParam.size());
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
@@ -170,9 +173,8 @@ public class MatchUtils {
 	}
 
 	private void resizeInputImage() {
-		IntPair prop = getProportion();
-		int sectorVlen = prop.y * getPropNumberOfPixels();
-		int sectorHlen = prop.x * getPropNumberOfPixels();
+		int sectorVlen = proportion.y * Proportion.getPropNumberOfPixels();
+		int sectorHlen = proportion.x * Proportion.getPropNumberOfPixels();
 		int divHorizontal = getNumCols();
 		int divVertical = getNumLines();
 		int totalWidth = sectorHlen * divHorizontal;
@@ -193,33 +195,64 @@ public class MatchUtils {
 	}
 
 	private void match() {
-		loadRootSignatureParams(); // fills rootparam
+		boolean loadPreMatchedSignatures = param.getFlag('l');
+		loadRootSignatureParams(loadPreMatchedSignatures?'l':'s'); // fills rootParam
 		getInputImage(); // fills inputimage
-		System.out.println(""+new Date()+"Loading Signatures...");
-		loadSignatureRoot(); // fills siglist
-		sigarray = siglist.toArray(new Signature[1]);
-		System.out.println(""+new Date()+"Resizing Input Image...");
-		resizeInputImage();// must be after loading signatureRoot
+		if ( !param.getFlag('l')) {
+			System.out.println(""+new Date()+"Loading Signatures...");
+			loadSignatureRoot(); // fills sigarray
+		}
+		initProportion();
+		resizeInputImage();// must be after loading signatureRoot to get proportions
 		System.out.println(""+new Date()+"Calculating sectors...");
 		loadSectorsMeanColor(); // fills rgb
-		System.out.println(""+new Date()+"Begin matching...");
-		matchSectorsWithSignatures(); // fills int match [][]
-		if ( param.getFlag('m')) {
-			saveMatchFile();
+		if ( param.getFlag('l')) {
+			System.out.println(""+new Date()+"Loading PreMatched Signatures...");
+			loadMatchFile();
 		} else {
-			System.out.println(""+new Date()+"Begin getting matched images...");
-			getMatchedImages(); // fills images[][]
-			// mountOutputImage(); // fills ouputImage
-			System.out.println(""+new Date()+"Begin mounting mosaic...");
-			mountOutputImageAlternative(); // fills ouputImage
-			System.out.println(""+new Date()+"Writing mosaic to file...");
-			writeImage(outputImage);
-			System.out.println(""+new Date()+"Success");
+			System.out.println(""+new Date()+"Begin matching...");
+			matchSectorsWithSignatures(); // fills int match [][]
+			if ( param.getFlag('m')) {
+				saveMatchFile();
+			} 
 		}
+		System.out.println(""+new Date()+"Begin getting matched images...");
+		getMatchedImages(); // fills images[][]
+		// mountOutputImage(); // fills ouputImage
+		System.out.println(""+new Date()+"Begin mounting mosaic...");
+		mountOutputImageAlternative(); // fills ouputImage
+		System.out.println(""+new Date()+"Writing mosaic to file...");
+		writeImage(outputImage);
+		System.out.println(""+new Date()+"Success");
 	}
 
 	private void saveMatchFile() {
+		PrintWriter matchWriter = null;
+		try {
+			matchWriter = new PrintWriter(getMatchFile());
+			int divHorizontal = getNumCols();
+			int divVertical = getNumLines();
+			matchWriter.println("@divHorizontal="+divHorizontal);
+			matchWriter.println("@divVertical="+divVertical);
+			if (getVertical()) {
+				matchWriter.println("@Vproportion="+sproportion);
+			} else {
+				matchWriter.println("@Hproportion="+sproportion);
+			}
+
+			for (int i = 0; i < divHorizontal; ++i) {
+				if (verbose) System.out.println("***lin=" + i + "***");
+				for (int j = 0; j < divVertical; ++j) {
+					matchWriter.println(""+i+","+j+"="+sigarray[match[i][j]]);
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace(System.err);
+		} finally {
+			if (null!=matchWriter) matchWriter.close();
+		}
 		
+
 	}
 
 	private void writeImage(BufferedImage image) {
@@ -234,18 +267,16 @@ public class MatchUtils {
 	BufferedImage images[][] = null;
 
 	private void getMatchedImages() {
-		IntPair prop = getProportion();
-		int sectorVlen = prop.x * getPropNumberOfPixels();
-		int sectorHlen = prop.y * getPropNumberOfPixels();
+		int sectorVlen = proportion.x * Proportion.getPropNumberOfPixels();
+		int sectorHlen = proportion.y * Proportion.getPropNumberOfPixels();
 		int divHorizontal = getNumCols();
 		int divVertical = getNumLines();
 		images = new BufferedImage[divHorizontal][divVertical];
 		for (int i = 0; i < divHorizontal; ++i) {
 			if (verbose) System.out.println("***lin=" + i + "***");
 			for (int j = 0; j < divVertical; ++j) {
-				sigarray[match[i][j]].updateRootFolder(param.getArg('r'));
-				images[i][j] = ImageProcessingUtils.get(sigarray[match[i][j]], getProportion(),
-						getPropNumberOfPixels());
+				images[i][j] = ImageProcessingUtils.get(sigarray[match[i][j]], proportion,
+						Proportion.getPropNumberOfPixels());
 				if (verbose) System.out.println("images[i][j].getWidth()=" + images[i][j].getWidth());
 				if (verbose) System.out.println("images[i][j].getHeight()=" + images[i][j].getHeight());
 			}
@@ -255,9 +286,8 @@ public class MatchUtils {
 	BufferedImage outputImage = null;
 
 	private void mountOutputImage() {
-		IntPair prop = getProportion();
-		int sectorVlen = prop.y * getPropNumberOfPixels();
-		int sectorHlen = prop.x * getPropNumberOfPixels();
+		int sectorVlen = proportion.y * Proportion.getPropNumberOfPixels();
+		int sectorHlen = proportion.x * Proportion.getPropNumberOfPixels();
 		int divHorizontal = getNumCols();
 		int divVertical = getNumLines();
 		int totalwidth = sectorHlen * divHorizontal;
@@ -326,9 +356,8 @@ public class MatchUtils {
 	}
 
 	private void mountOutputImageAlternative() {
-		IntPair prop = getProportion();
-		int sectorVlen = prop.y * getPropNumberOfPixels();
-		int sectorHlen = prop.x * getPropNumberOfPixels();
+		int sectorVlen = proportion.y * Proportion.getPropNumberOfPixels();
+		int sectorHlen = proportion.x * Proportion.getPropNumberOfPixels();
 		int divHorizontal = getNumCols();
 		int divVertical = getNumLines();
 		int totalwidth = sectorHlen * divHorizontal;
@@ -363,6 +392,49 @@ public class MatchUtils {
 	List<Signature> siglist;
 	Signature[] sigarray;
 
+	private void loadMatchFile() {
+		int divHorizontal = getNumCols();
+		int divVertical = getNumLines();
+		/*
+		 * 			matchWriter.println("@divHorizontal="+divHorizontal);
+			matchWriter.println("@divVertical="+divVertical);
+			if (getVertical()) {
+				matchWriter.println("@Vproportion="+sproportion);
+			} else {
+				matchWriter.println("@Hproportion="+sproportion);
+		 */
+		if (!(""+divVertical).equals(rootParam.get("divVertical"))) {
+			throw new RuntimeException("divVertical="+divVertical+" rootParam.get(\"divVertical\"))="+rootParam.get("divVertical"));
+		}
+		if (!(""+divHorizontal).equals(rootParam.get("divHorizontal"))) {
+			throw new RuntimeException("divHorizontal="+divHorizontal+" rootParam.get(\"divHorizontal\"))="+rootParam.get("divHorizontal"));
+		}
+		match = new int [divHorizontal][divVertical];
+		sigarray = new Signature[divVertical*divHorizontal];
+		String matchfile = param.getArg('l');
+		int k=0;
+		try (BufferedReader br = new BufferedReader(new FileReader(matchfile))) {
+			for (String line; (line = br.readLine()) != null;) {
+				if (line.startsWith("@")) {
+					continue;
+				} else if (line.startsWith("#")) {
+					continue;
+				} else {
+					String []p1 = line.split("=");
+					String []p2 = p1[0].split(",");
+					Signature sig = new Signature(p1[1]);
+					match[Integer.parseInt(p2[0])][Integer.parseInt(p2[1])]=k;
+					sigarray[k++]=sig;
+					/*
+i,j="+sigarray[match[i][j]]
+					 */
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
 	private void loadSignatureRoot() {
 		siglist = new ArrayList<Signature>();
 		String rootsignaturefile = param.getArg('s');
@@ -393,6 +465,7 @@ public class MatchUtils {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+		sigarray = siglist.toArray(new Signature[1]);
 	}
 
 	private void loadSignature(String signaturefile) {
@@ -463,6 +536,7 @@ public class MatchUtils {
 				int picked = match[i][j]; 
 				sigarray[picked].lastx = i;
 				sigarray[picked].lasty = j;
+				sigarray[match[i][j]].updateRootFolder(param.getArg('r'));
 				/* Imagens com numeração próximas podem ser muito semelhantes */
 				if (picked>1) {
 					sigarray[picked-1].lastx = i;

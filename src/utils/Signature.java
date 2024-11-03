@@ -11,6 +11,7 @@ public class Signature {
 
     public int lastx=Integer.MIN_VALUE;
     public int lasty=Integer.MIN_VALUE;
+    public int sqrd=Integer.MAX_VALUE;;
     
     public Signature (String s) {
     	String s2[] = s.split(",");
@@ -35,4 +36,8 @@ public class Signature {
     	if (null==s || s.isEmpty()) return;
     	filename = s+filename.substring(s.length());
     }
+    public String toString() {
+    	//@formato= filename,winicial,hinicial,wfinal,hfinal,mean_red,mean_green,mean_blue
+    	return filename+","+winicial+","+hinicial+","+wfinal+","+hfinal+","+rgb.r+","+rgb.g+","+rgb.b;
+    }	
 }
